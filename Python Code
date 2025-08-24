@@ -1,0 +1,411 @@
+import pandas as pd #Handling TSV data
+import json #JSON Dataset downloaded from BOLD
+import matplotlib.pyplot as plt
+import numpy as np 
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap #Custom colour gradients
+import warnings #Cleaner output
+warnings.filterwarnings('ignore')
+
+# Cartopy imports
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+# ==== STEP 1: CHANGE THIS TO YOUR FILE PATH ====
+FILE_PATH = r"C:\Users\Pratham Shah\Downloads\CBN.31-Dec-2008\CBN.31-Dec-2008.tsv"  # CHANGE THIS TO YOUR ACTUAL FILE NAME
+FILE_TYPE = "tsv"  # Change to "json" if you have a JSON file
+
+print("Starting DNA Barcoding Analysis...")
+print(f"Looking for file: {FILE_PATH}")
+
+# ==== STEP 2: LOAD DATA ====
+try:
+    if FILE_TYPE == "tsv":
+        print("Loading TSV file...")
+        df = pd.read_csv(FILE_PATH, sep='\t', low_memory=False)
+        print(f"Loaded {len(df)} total records")
+        print(f"Columns available: {list(df.columns)}")
+        
+        # Find country column
+        country_col = None
+        for col in df.columns:
+            if any(word in col.lower() for word in ['country', 'nation', 'location']):
+                country_col = col
+                break
+        
+        if country_col is None:
+            print("ERROR: Could not find country column!")
+            print("Available columns:", list(df.columns))
+            exit()
+        
+        print(f"Using country column: {country_col}")
+        
+        # Use ALL records, not just matK
+        print("Using ALL DNA barcoding records...")
+        barcode_df = df.dropna(subset=[country_col])
+        print(f"Found {len(barcode_df)} records with country information")
+        
+        # Count by country
+        country_counts = barcode_df[country_col].value_counts()
+        print(f"Countries with DNA barcoding data: {len(country_counts)}")
+        
+    elif FILE_TYPE == "json":
+        print("Loading JSON file...")
+        with open(FILE_PATH, 'r') as f:
+            data = json.load(f)
+        
+        if isinstance(data, list):
+            df = pd.DataFrame(data)
+        else:
+            df = pd.DataFrame([data])
+        
+        print(f"Loaded {len(df)} records from JSON")
+        
+        # You'll need to specify the country column name for JSON
+        country_col = 'country'  # CHANGE THIS if your country field has a different name
+        
+        if country_col not in df.columns:
+            print(f"ERROR: Country column '{country_col}' not found!")
+            print("Available columns:", list(df.columns))
+            exit()
+        
+        barcode_df = df.dropna(subset=[country_col])
+        country_counts = barcode_df[country_col].value_counts()
+
+except Exception as e:
+    print(f"ERROR loading file: {e}")
+    exit()
+
+# ==== STEP 3: SHOW RESULTS ====
+print("\n" + "="*50)
+print("RESULTS SUMMARY")
+print("="*50)
+print(f"Total DNA barcoding sequences: {len(barcode_df)}")
+print(f"Countries represented: {len(country_counts)}")
+print("\nTop 15 countries by DNA barcoding study count:")
+for i, (country, count) in enumerate(country_counts.head(15).items()):
+    print(f"{i+1:2d}. {country:<25} {count:>6} studies")
+
+# ==== STEP 4: PREPARE DATA FOR HEATMAP ====
+print("\nPreparing heatmap data...")
+
+# Extended country coordinates
+country_coords = {
+    'Canada': (60.0, -95.0),
+    'United States': (40.0, -100.0),
+    'USA': (40.0, -100.0),
+    'Brazil': (-10.0, -55.0),
+    'Australia': (-25.0, 135.0),
+    'China': (35.0, 105.0),
+    'India': (20.0, 77.0),
+    'Russia': (60.0, 100.0),
+    'Mexico': (23.0, -102.0),
+    'Argentina': (-34.0, -64.0),
+    'Peru': (-10.0, -76.0),
+    'Colombia': (4.0, -72.0),
+    'Venezuela': (8.0, -66.0),
+    'Ecuador': (-2.0, -78.0),
+    'Bolivia': (-17.0, -65.0),
+    'Chile': (-30.0, -71.0),
+    'South Africa': (-29.0, 24.0),
+    'Kenya': (1.0, 38.0),
+    'Tanzania': (-6.0, 35.0),
+    'Madagascar': (-19.0, 47.0),
+    'Indonesia': (-5.0, 120.0),
+    'Malaysia': (2.5, 112.5),
+    'Thailand': (15.0, 100.0),
+    'Philippines': (13.0, 122.0),
+    'Japan': (36.0, 138.0),
+    'South Korea': (36.0, 128.0),
+    'United Kingdom': (54.0, -2.0),
+    'France': (46.0, 2.0),
+    'Germany': (51.0, 9.0),
+    'Italy': (42.0, 12.0),
+    'Spain': (40.0, -4.0),
+    'Portugal': (39.0, -8.0),
+    'Netherlands': (52.0, 5.0),
+    'Belgium': (50.0, 4.0),
+    'Switzerland': (47.0, 8.0),
+    'Austria': (47.0, 13.0),
+    'Poland': (52.0, 19.0),
+    'Czech Republic': (50.0, 15.0),
+    'Hungary': (47.0, 19.0),
+    'Romania': (46.0, 25.0),
+    'Bulgaria': (43.0, 25.0),
+    'Greece': (39.0, 22.0),
+    'Turkey': (39.0, 35.0),
+    'Norway': (62.0, 10.0),
+    'Sweden': (62.0, 15.0),
+    'Finland': (64.0, 26.0),
+    'Denmark': (56.0, 10.0),
+    'Iceland': (65.0, -18.0),
+    'Ireland': (53.0, -8.0),
+    'New Zealand': (-41.0, 174.0),
+    'Pakistan': (30.0, 70.0),
+    'Bangladesh': (24.0, 90.0),
+    'Nepal': (28.0, 84.0),
+    'Sri Lanka': (7.0, 81.0),
+    'Myanmar': (22.0, 98.0),
+    'Vietnam': (16.0, 106.0),
+    'Cambodia': (13.0, 105.0),
+    'Laos': (18.0, 105.0),
+    'Singapore': (1.0, 104.0),
+    'Brunei': (4.0, 114.0),
+    'Mongolia': (46.0, 105.0),
+    'Kazakhstan': (48.0, 68.0),
+    'Uzbekistan': (41.0, 64.0),
+    'Kyrgyzstan': (41.0, 75.0),
+    'Tajikistan': (39.0, 71.0),
+    'Turkmenistan': (40.0, 60.0),
+    'Afghanistan': (33.0, 65.0),
+    'Iran': (32.0, 53.0),
+    'Iraq': (33.0, 44.0),
+    'Syria': (35.0, 38.0),
+    'Jordan': (31.0, 36.0),
+    'Lebanon': (34.0, 36.0),
+    'Israel': (31.0, 35.0),
+    'Palestine': (32.0, 35.0),
+    'Saudi Arabia': (24.0, 45.0),
+    'Kuwait': (29.0, 48.0),
+    'Bahrain': (26.0, 50.0),
+    'Qatar': (25.0, 51.0),
+    'UAE': (24.0, 54.0),
+    'Oman': (21.0, 57.0),
+    'Yemen': (15.0, 48.0),
+    'Egypt': (26.0, 30.0),
+    'Libya': (25.0, 17.0),
+    'Tunisia': (34.0, 9.0),
+    'Algeria': (28.0, 3.0),
+    'Morocco': (32.0, -5.0),
+    'Sudan': (15.0, 30.0),
+    'Ethiopia': (8.0, 38.0),
+    'Somalia': (6.0, 48.0),
+    'Uganda': (1.0, 32.0),
+    'Rwanda': (-2.0, 30.0),
+    'Burundi': (-3.0, 30.0),
+    'Democratic Republic of Congo': (-4.0, 21.0),
+    'Congo': (-1.0, 15.0),
+    'Cameroon': (4.0, 12.0),
+    'Central African Republic': (7.0, 21.0),
+    'Chad': (15.0, 19.0),
+    'Niger': (16.0, 8.0),
+    'Nigeria': (9.0, 8.0),
+    'Benin': (10.0, 2.0),
+    'Togo': (8.0, 1.0),
+    'Ghana': (8.0, -2.0),
+    'Burkina Faso': (13.0, -2.0),
+    'Mali': (17.0, -4.0),
+    'Senegal': (14.0, -14.0),
+    'Mauritania': (20.0, -12.0),
+    'Gambia': (13.0, -15.0),
+    'Guinea-Bissau': (12.0, -15.0),
+    'Guinea': (11.0, -10.0),
+    'Sierra Leone': (8.0, -12.0),
+    'Liberia': (6.0, -10.0),
+    'Ivory Coast': (8.0, -5.0),
+    'Zambia': (-15.0, 28.0),
+    'Zimbabwe': (-20.0, 30.0),
+    'Botswana': (-22.0, 24.0),
+    'Namibia': (-22.0, 14.0),
+    'Mozambique': (-18.0, 35.0),
+    'Malawi': (-13.0, 34.0),
+    'Angola': (-12.0, 18.0),
+    'Gabon': (-1.0, 11.0),
+    'Equatorial Guinea': (2.0, 10.0),
+    'Sao Tome and Principe': (1.0, 7.0),
+    'Uruguay': (-33.0, -56.0),
+    'Paraguay': (-23.0, -58.0),
+    'Guyana': (5.0, -59.0),
+    'Suriname': (4.0, -56.0),
+    'French Guiana': (4.0, -53.0),
+    'Costa Rica': (10.0, -84.0),
+    'Panama': (9.0, -80.0),
+    'Nicaragua': (13.0, -85.0),
+    'Honduras': (15.0, -86.0),
+    'El Salvador': (14.0, -89.0),
+    'Guatemala': (16.0, -90.0),
+    'Belize': (17.0, -88.0),
+    'Jamaica': (18.0, -77.0),
+    'Haiti': (19.0, -72.0),
+    'Dominican Republic': (19.0, -70.0),
+    'Cuba': (22.0, -79.0),
+    'Bahamas': (24.0, -78.0),
+    'Barbados': (13.0, -59.0),
+    'Trinidad and Tobago': (11.0, -61.0),
+    'Puerto Rico': (18.0, -66.0),
+    'Papua New Guinea': (-6.0, 147.0),
+    'Fiji': (-18.0, 175.0),
+    'Vanuatu': (-16.0, 167.0),
+    'Solomon Islands': (-9.0, 160.0),
+    'Samoa': (-14.0, -172.0),
+    'Tonga': (-21.0, -175.0),
+    'Palau': (8.0, 134.0),
+    'Micronesia': (7.0, 150.0),
+    'Marshall Islands': (7.0, 171.0),
+    'Kiribati': (-3.0, -168.0),
+    'Tuvalu': (-8.0, 179.0),
+    'Nauru': (-1.0, 166.0),
+}
+
+# Biodiversity hotspots with coordinates
+hotspots = {
+    'Madagascar': (-20.0, 47.0, 10),
+    'Sundaland': (2.0, 110.0, 9),
+    'Philippines': (13.0, 122.0, 9),
+    'Atlantic Forest': (-15.0, -45.0, 8),
+    'Cerrado': (-15.0, -50.0, 8),
+    'Caribbean': (19.0, -70.0, 8),
+    'Indo-Burma': (20.0, 100.0, 8),
+    'Western Ghats': (10.0, 77.0, 8),
+    'Eastern Himalayas': (28.0, 90.0, 7),
+    'Mountains of SW China': (28.0, 105.0, 7),
+    'Tropical Andes': (-10.0, -70.0, 9),
+    'Mesoamerica': (15.0, -90.0, 7),
+    'Tumbes-Choco-Magdalena': (5.0, -77.0, 7),
+    'California Floristic': (36.0, -120.0, 6),
+    'Cape Floristic': (-33.0, 19.0, 7),
+    'Caucasus': (42.0, 45.0, 6),
+    'Coastal Forests E Africa': (-10.0, 40.0, 6),
+    'East Melanesian Islands': (-10.0, 155.0, 6),
+    'Eastern Afromontane': (0.0, 37.0, 6),
+    'Forests of E Australia': (-28.0, 153.0, 6),
+    'Guinean Forests W Africa': (7.0, -5.0, 6),
+    'Himalaya': (28.0, 85.0, 7),
+    'Horn of Africa': (8.0, 47.0, 5),
+    'Irano-Anatolian': (35.0, 50.0, 5),
+    'Japan': (36.0, 138.0, 6),
+    'Madrean Pine-Oak': (25.0, -107.0, 5),
+    'Maputaland-Pondoland': (-28.0, 28.0, 6),
+    'Mediterranean Basin': (38.0, 15.0, 7),
+    'Mountains Central Asia': (40.0, 70.0, 5),
+    'New Caledonia': (-21.0, 166.0, 6),
+    'New Zealand': (-41.0, 174.0, 6),
+    'Polynesia-Micronesia': (-10.0, -140.0, 6),
+    'Southwest Australia': (-32.0, 117.0, 6),
+    'Succulent Karoo': (-30.0, 18.0, 6),
+    'Wallacea': (-3.0, 120.0, 7)
+}
+
+# ==== STEP 5: CREATE WORLD MAP VISUALIZATION ====
+print("Creating world map visualization...")
+
+# Create figure with cartopy projection
+fig = plt.figure(figsize=(20, 16))
+
+# 1. DNA Barcoding Studies Map
+ax1 = fig.add_subplot(2, 2, 1, projection=ccrs.PlateCarree())
+ax1.add_feature(cfeature.COASTLINE, alpha=0.5)
+ax1.add_feature(cfeature.BORDERS, alpha=0.3)
+ax1.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.3)
+ax1.add_feature(cfeature.LAND, color='lightgray', alpha=0.3)
+ax1.set_global()
+
+# Plot study data as circles
+for country, count in country_counts.items():
+    if country in country_coords:
+        lat, lon = country_coords[country]
+        # Size proportional to study count
+        size = min(count / 10, 500)  # Cap maximum size
+        ax1.scatter(lon, lat, s=size, c='blue', alpha=0.6, 
+                   transform=ccrs.PlateCarree(), edgecolors='darkblue')
+
+ax1.set_title('DNA Barcoding Studies Distribution', fontsize=14, fontweight='bold')
+ax1.gridlines(draw_labels=True, alpha=0.3)
+
+# 2. Biodiversity Hotspots Map
+ax2 = fig.add_subplot(2, 2, 2, projection=ccrs.PlateCarree())
+ax2.add_feature(cfeature.COASTLINE, alpha=0.5)
+ax2.add_feature(cfeature.BORDERS, alpha=0.3)
+ax2.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.3)
+ax2.add_feature(cfeature.LAND, color='lightgray', alpha=0.3)
+ax2.set_global()
+
+# Plot hotspots as circles
+for hotspot_name, (lat, lon, importance) in hotspots.items():
+    size = importance * 50  # Size proportional to importance
+    ax2.scatter(lon, lat, s=size, c='red', alpha=0.7, 
+               transform=ccrs.PlateCarree(), edgecolors='darkred')
+
+ax2.set_title('Biodiversity Hotspots Distribution', fontsize=14, fontweight='bold')
+ax2.gridlines(draw_labels=True, alpha=0.3)
+
+# 3. Combined Map
+ax3 = fig.add_subplot(2, 2, 3, projection=ccrs.PlateCarree())
+ax3.add_feature(cfeature.COASTLINE, alpha=0.5)
+ax3.add_feature(cfeature.BORDERS, alpha=0.3)
+ax3.add_feature(cfeature.OCEAN, color='lightblue', alpha=0.3)
+ax3.add_feature(cfeature.LAND, color='lightgray', alpha=0.3)
+ax3.set_global()
+
+# Plot both datasets
+for country, count in country_counts.items():
+    if country in country_coords:
+        lat, lon = country_coords[country]
+        size = min(count / 10, 500)
+        ax3.scatter(lon, lat, s=size, c='blue', alpha=0.6, 
+                   transform=ccrs.PlateCarree(), edgecolors='darkblue', 
+                   label='DNA Studies' if country == list(country_counts.keys())[0] else "")
+
+for hotspot_name, (lat, lon, importance) in hotspots.items():
+    size = importance * 50
+    ax3.scatter(lon, lat, s=size, c='red', alpha=0.7, 
+               transform=ccrs.PlateCarree(), edgecolors='darkred',
+               label='Biodiversity Hotspots' if hotspot_name == list(hotspots.keys())[0] else "")
+
+ax3.set_title('Combined: Studies (Blue) vs Hotspots (Red)', fontsize=14, fontweight='bold')
+ax3.gridlines(draw_labels=True, alpha=0.3)
+ax3.legend(loc='upper left')
+
+# 4. Bar Chart
+ax4 = fig.add_subplot(2, 2, 4)
+top_countries = country_counts.head(15)
+ax4.barh(range(len(top_countries)), top_countries.values, color='steelblue')
+ax4.set_yticks(range(len(top_countries)))
+ax4.set_yticklabels(top_countries.index, fontsize=10)
+ax4.set_xlabel('Number of Studies')
+ax4.set_title('Top 15 Countries by Study Count', fontsize=14, fontweight='bold')
+ax4.grid(axis='x', alpha=0.3)
+ax4.invert_yaxis()
+
+plt.suptitle('DNA Barcoding Geographic Analysis: Global Distribution on World Map', 
+             fontsize=16, fontweight='bold')
+plt.tight_layout()
+
+# Save the figure
+import os
+current_dir = os.getcwd()
+image_file = 'dna_barcoding_worldmap.png'
+plt.savefig(image_file, dpi=300, bbox_inches='tight')
+print(f"\nWorld map saved as: {image_file}")
+print(f"Full path: {os.path.join(current_dir, image_file)}")
+
+plt.show()
+
+# ==== STEP 6: BIAS ANALYSIS ====
+print("\n" + "="*50)
+print("SAMPLING BIAS ANALYSIS")
+print("="*50)
+
+total_studies = sum(country_counts)
+top_5_countries = country_counts.head(5)
+top_5_percentage = sum(top_5_countries) / total_studies * 100
+
+print(f"Total DNA barcoding studies: {total_studies}")
+print(f"Top 5 countries represent {top_5_percentage:.1f}% of all studies")
+print(f"Geographic coverage: {len(country_counts)} countries")
+
+# Identify undersampled hotspots
+print("\nPotentially undersampled biodiversity hotspots:")
+for hotspot_name, (lat, lon, importance) in hotspots.items():
+    nearby_sampling = 0
+    nearby_countries = []
+    
+    for country, coords in country_coords.items():
+        if abs(coords[0] - lat) < 20 and abs(coords[1] - lon) < 20:
+            nearby_countries.append(country)
+            nearby_sampling += country_counts.get(country, 0)
+    
+    if nearby_sampling < total_studies * 0.02:  # Less than 2% of studies
+        print(f"• {hotspot_name}: {nearby_sampling} studies (Importance: {importance}/10)")
+
+print(f"\nAnalysis complete! Check '{image_file}' for the world map visualization.")
